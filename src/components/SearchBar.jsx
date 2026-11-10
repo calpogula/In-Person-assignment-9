@@ -1,13 +1,13 @@
-import { useState } from 'react'
-// TODO: Import useRef for input focus management
+import { useState, useRef, useEffect } from 'react'
 
 function SearchBar({ onSearch }) {
   const [searchTerm, setSearchTerm] = useState('')
+  const searchInputRef = useRef(null)
 
-  // TODO: Create a ref for the search input
-  // const searchInputRef = useRef(null)
-
-  // TODO: Add useEffect to auto-focus the input on mount
+  // put the cursor in the box when the projects page opens
+  useEffect(() => {
+    searchInputRef.current?.focus()
+  }, [])
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -24,7 +24,7 @@ function SearchBar({ onSearch }) {
   const handleClear = () => {
     setSearchTerm('')
     onSearch('')
-    // TODO: Focus the input after clearing using the ref
+    searchInputRef.current?.focus()
   }
 
   return (
@@ -32,7 +32,7 @@ function SearchBar({ onSearch }) {
       <div className="search-input-wrapper">
         <span className="search-icon">🔍</span>
         <input
-          // TODO: Add ref attribute
+          ref={searchInputRef}
           type="text"
           placeholder="Search projects by name, tech, or description..."
           value={searchTerm}
