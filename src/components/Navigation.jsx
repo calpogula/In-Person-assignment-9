@@ -1,24 +1,20 @@
-// TODO: Import NavLink from react-router-dom instead of using regular links
+import { NavLink } from 'react-router-dom'
 
 function Navigation() {
   return (
     <nav className="navigation">
-      {/* TODO: Replace these <a> tags with NavLink components
-          - Use the className prop with a function that receives { isActive }
-          - Update the paths to match your routes
-      */}
-      <a href="/" className="nav-link">
+      <NavLink to="/" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
         Home
-      </a>
-      <a href="/projects" className="nav-link">
+      </NavLink>
+      <NavLink to="/projects" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
         Projects
-      </a>
-      <a href="/about" className="nav-link">
+      </NavLink>
+      <NavLink to="/about" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
         About
-      </a>
-      <a href="/contact" className="nav-link">
+      </NavLink>
+      <NavLink to="/contact" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
         Contact
-      </a>
+      </NavLink>
     </nav>
   )
 }

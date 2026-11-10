@@ -575,3 +575,12 @@
     grid-template-columns: 1fr;
   }
 }
+
+.project-card-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.projects-layout > h2 {
+  margin-bottom: 0.25rem;
+}
