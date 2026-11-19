@@ -1,0 +1,476 @@
+---
+title: "Assignment 3: Bivariate Analysis of the 2022 General Social Survey"
+author: "Ani Pogula"
+date: "November 19, 2026"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    df_print: kable
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    latex_engine: pdflatex
+params:
+  answers_only: false
+header-includes:
+  - \usepackage{pdflscape}
+  - \usepackage{booktabs}
+  - \usepackage{longtable}
+---
+
+```{r setup, include = !params$answers_only, echo = !params$answers_only, message = FALSE, warning = FALSE}
+# Packages used in the class examples.
+# install.packages() only needs to be run once on a machine.
+# Those lines stay commented out so knitting does not try to reinstall them.
+# install.packages("car")
+# install.packages("gdata")
+# install.packages("gmodels")
+# install.packages("lsr")
+# install.packages("ggplot2")
+
+library(car)       # leveneTest(), homogeneity of variance
+library(gmodels)    # CrossTable(), with standardized residuals
+library(lsr)        # cramersV() and cohensD()
+library(ggplot2)    # scatterplot
+
+# Print p-values in decimal form, and keep console tables wide enough
+# that the crosstab does not break in the middle of a cell.
+options(scipen = 999, width = 120)
+knitr::opts_chunk$set(
+  echo = !params$answers_only,
+  message = FALSE,
+  warning = FALSE,
+  comment = NA,
+  fig.width = 7.2,
+  fig.height = 4.6,
+  fig.align = "center"
+)
+
+# Round a number to two decimals and keep the trailing zero (0.10, not 0.1).
+r2 <- function(x) format(round(as.numeric(x), 2), nsmall = 2)
+
+# table() prints a numeric variable as one long row. On a page that row
+# runs off the right edge, so frequencies are reprinted in two columns.
+# The counts are identical to table(x, useNA = "ifany").
+print_freq <- function(x) {
+  tab <- table(x, useNA = "ifany")
+  out <- data.frame(value = names(tab), n = as.integer(tab), row.names = NULL)
+  print(out, row.names = FALSE)
+}
+
+# The 5% significance level used for every test in this assignment.
+alpha <- 0.05
+```
+
+This report uses the 2022 General Social Survey subset posted for the assignment (`GSS2022.Rdata`, N = 3,544). Every test uses a 5% significance level. Numbers reported in the written answers are rounded to two decimal places. The R output pasted under each question is the output R printed.
+
+Missing values in this file use the current GSS reserve codes. A negative code is not a real answer:
+
+- `-100` inapplicable (the question was not asked)
+- `-99` no answer
+- `-98` don't know
+- `-97` skipped on web
+- `-90` refused
+
+```{r load-data}
+# Load the subset. The object inside the file is named GSS2022.
+load("GSS2022.Rdata")
+
+# One function sets every reserve code to NA. Substantive codes in this
+# subset are 0 or positive, so a negative value is always a reserve code.
+# The assignment allows missing values to be set on the original variable.
+# Later recodes (trustR, CHILDS_YN) are written to new variables.
+set_gss_missing <- function(x) {
+  x[x < 0] <- NA
+  x
+}
+```
+
+# Task 1: Chi-square test of independence
+
+`TRUST` asks whether most people can be trusted. In the 2022 codebook the substantive codes are ordered from more trust to less trust, with a middle "depends" category:
+
+- `1` most people can be trusted
+- `2` can't be too careful
+- `3` depends
+
+`REGION` is the Census region of the interview. In the current GSS coding it has four nominal categories and no reserve codes in this file:
+
+- `1` Northeast
+- `2` Midwest
+- `3` South
+- `4` West
+
+## 1a. Missing values for TRUST and REGION
+
+```{r task1-missing}
+# Keep a copy of the original codes so the reserve codes can be shown
+# before they are replaced.
+trust_before <- GSS2022$TRUST
+region_before <- GSS2022$REGION
+
+# Reserve codes actually present for TRUST: -100 (inapplicable) and -98 (don't know).
+cat("TRUST codes below 0, before they are set to NA:\n")
+print(table(trust_before[trust_before < 0]))
+
+cat("\nREGION codes below 0, before they are set to NA:\n")
+region_neg <- region_before[region_before < 0]
+if (length(region_neg) == 0) {
+  cat("None. Every REGION value is a substantive code.\n")
+} else {
+  print(table(region_neg))
+}
+
+GSS2022$TRUST <- set_gss_missing(GSS2022$TRUST)
+GSS2022$REGION <- set_gss_missing(GSS2022$REGION)
+
+cat("\nTRUST after reserve codes are set to NA:\n")
+print(table(GSS2022$TRUST, useNA = "ifany"))
+
+cat("\nREGION after reserve codes are set to NA:\n")
+print(table(GSS2022$REGION, useNA = "ifany"))
+```
+
+`TRUST` had 2,325 inapplicable cases (`-100`) and 2 "don't know" cases (`-98`). Both are now `NA`, which leaves 1,217 substantive answers: 306 coded 1 (most people can be trusted), 804 coded 2 (can't be too careful), and 107 coded 3 (depends). `REGION` had no reserve codes. All 3,544 respondents stay in one of the four regions: Northeast 525, Midwest 798, South 1,415, West 806.
+
+## 1b. Reverse-coded trust (`trustR`)
+
+The original codes run from high trust (1) to "depends" (3). `trustR` reverses that order and keeps three categories:
+
+- `1` Depends (original code 3)
+- `2` Can't be too careful (original code 2)
+- `3` Most people can be trusted (original code 1)
+
+For a 1–3 variable the reverse code is `4 - original`. Cases that are already `NA` stay `NA`. The original `TRUST` variable is left as it was after the missing-value recode.
+
+```{r task1-recode}
+GSS2022$trustR <- ifelse(is.na(GSS2022$TRUST), NA, 4 - GSS2022$TRUST)
+
+# Labeled copies are used only for the readable crosstab and the test.
+# The numeric trustR above is the variable the assignment asked for.
+GSS2022$trustR_f <- factor(
+  GSS2022$trustR,
+  levels = c(1, 2, 3),
+  labels = c("Depends", "Can't be too careful", "Most people can be trusted")
+)
+GSS2022$region_f <- factor(
+  GSS2022$REGION,
+  levels = c(1, 2, 3, 4),
+  labels = c("Northeast", "Midwest", "South", "West")
+)
+
+cat("Crosstab of original TRUST (rows) by new trustR (columns):\n")
+print(table(TRUST = GSS2022$TRUST, trustR = GSS2022$trustR, useNA = "ifany"))
+```
+
+The crosstab checks the reverse code. Original 1 (most people can be trusted) lines up with `trustR` = 3 (306 people). Original 2 stays 2 (804 people). Original 3 (depends) lines up with `trustR` = 1 (107 people). The 2,327 missing cases are missing on both variables. No substantive case lands in the wrong column.
+
+## 1c. Chi-square test and crosstab with standardized residuals
+
+```{r task1-chi, results = "asis"}
+# Complete cases on the two factors. Chi-square uses the 1,217 people
+# who were asked TRUST and gave a substantive answer. REGION has no missing values.
+trust_region <- GSS2022[complete.cases(GSS2022$trustR_f, GSS2022$region_f), ]
+
+# CrossTable cell contents, top to bottom:
+#   count, expected count, row percent, Pearson standardized residual,
+#   adjusted standardized residual.
+# prop.chisq is off so the cell is not crowded by a chi-square contribution.
+cross_out <- capture.output(
+  CrossTable(
+    trust_region$trustR_f,
+    trust_region$region_f,
+    prop.r = TRUE,
+    prop.c = FALSE,
+    prop.t = FALSE,
+    prop.chisq = FALSE,
+    chisq = TRUE,
+    expected = TRUE,
+    sresid = TRUE,
+    asresid = TRUE,
+    format = "SPSS",
+    dnn = c("trustR", "region")
+  )
+)
+
+# On the PDF, print the wide crosstab in a small font on a landscape page.
+if (knitr::is_latex_output()) {
+  cat("\\begin{landscape}\n\\begin{scriptsize}\n\\begin{verbatim}\n")
+  cat(paste(cross_out, collapse = "\n"), "\n")
+  cat("\\end{verbatim}\n\\end{scriptsize}\n\\end{landscape}\n")
+} else {
+  cat("```\n")
+  cat(paste(cross_out, collapse = "\n"), "\n")
+  cat("```\n")
+}
+```
+
+```{r task1-chi-objects}
+tab_trust <- table(trust_region$trustR_f, trust_region$region_f)
+chi_trust <- chisq.test(tab_trust)
+v_trust <- cramersV(tab_trust)
+
+# R's stdres is the adjusted standardized residual (the "Adj Std Resid" row).
+# R's residuals is the Pearson residual (the "Std Residual" row).
+adj_resid <- chi_trust$stdres
+pearson_resid <- chi_trust$residuals
+```
+
+The smallest expected count in the table is 16.53, so every cell is above the usual rule of thumb of 5. The chi-square approximation is appropriate for this table.
+
+## 1d. Hypotheses
+
+Null hypothesis: `trustR` and `region` are independent. In the population, the distribution of trust does not differ by region.
+
+Alternative hypothesis: `trustR` and `region` are not independent. There is an association between trust and region.
+
+The test is non-directional. Chi-square does not state which region is more trusting. That pattern is read from the residuals in part g.
+
+## 1e. Test statistic and p-value
+
+The Pearson chi-square statistic is **`r r2(chi_trust$statistic)`** on **`r chi_trust$parameter`** degrees of freedom. The p-value is **`r format.pval(chi_trust$p.value, eps = 0.001, digits = 2)`** (0.00 when it is rounded to two decimal places).
+
+## 1f. Cramer's V
+
+```{r task1-v}
+cat("Cramer's V:\n")
+print(v_trust)
+```
+
+Cramer's V is **`r r2(v_trust)`**. The benchmark depends on the smaller of (number of rows minus 1) and (number of columns minus 1). This table is 3 by 4, so that value is 2. Cohen's benchmarks for Cramer's V at 2 degrees of freedom are about 0.07 (small), 0.21 (medium), and 0.35 (large).
+
+V = `r r2(v_trust)` is a **small** effect. It is just above the small benchmark and well below the medium benchmark. Region and trust are associated, and the association is weak.
+
+## 1g. Which cells contribute?
+
+A cell contributes to the association when the absolute value of its **adjusted standardized residual** is greater than **1.96**. That cutoff is the two-sided 5% critical value of the standard normal distribution. These are the values on the `Adj Std Resid` row of the crosstab (and in `chisq.test()$stdres`). A positive residual means the cell has more people than independence predicts. A negative residual means it has fewer.
+
+```{r task1-resid}
+cat("Adjusted standardized residuals (criterion: absolute value greater than 1.96):\n")
+print(round(adj_resid, 2))
+
+cat("\nPearson standardized residuals, the 'Std Residual' row:\n")
+print(round(pearson_resid, 2))
+```
+
+Four cells pass the 1.96 rule:
+
+- **Can't be too careful, Midwest** (adjusted residual `-3.66`). Fewer Midwestern respondents than expected say you can't be too careful.
+- **Can't be too careful, South** (adjusted residual `3.58`). More Southern respondents than expected say you can't be too careful.
+- **Most people can be trusted, Midwest** (adjusted residual `3.45`). More Midwestern respondents than expected say most people can be trusted.
+- **Most people can be trusted, South** (adjusted residual `-3.71`). Fewer Southern respondents than expected say most people can be trusted.
+
+No "Depends" cell contributes. No Northeast cell contributes, and no West cell contributes. The largest residual outside those four is West by "most people can be trusted" at 1.27, which is inside ±1.96.
+
+The `Std Residual` row is the Pearson residual, `(observed - expected) / sqrt(expected)`. Using the same ±1.96 rule on that row flags only two cells: most people can be trusted in the Midwest (`2.63`) and most people can be trusted in the South (`-2.49`). The "can't be too careful" Pearson residuals are `-1.88` in the Midwest and `1.62` in the South, so they do not pass 1.96 until the residual is adjusted for the row and column totals. The cell decision in this answer uses the adjusted residual, because that is the residual that follows a standard normal reference distribution.
+
+## 1h. Conclusion
+
+The chi-square test is statistically significant at the 5% level, so the null hypothesis of independence is rejected. In the 2022 GSS, trust and region are associated. The practical association is small (Cramer's V = `r r2(v_trust)`). The residual pattern is specific: relative to independence, respondents in the Midwest are more likely to say that most people can be trusted, and respondents in the South are more likely to say that you can't be too careful. Northeast and West do not stand out, and the small "depends" group does not drive the result.
+
+`TRUST` was not asked of everyone (2,325 inapplicable cases), so the test uses the 1,217 respondents who answered it. The result describes an association in this sample.
+
+# Task 2: Correlation
+
+`AGE` is the respondent's age in years. In this file the only reserve code is `-99` (no answer). Valid ages run from 18 to 89. The GSS top-codes age at 89, so 89 means 89 or older. `PHYSHLTH` is the number of days in the past 30 days that physical health was not good, from the Quality of Working Life module. Valid answers run from 0 to 30. Reserve codes in this file are `-100` (inapplicable; the module was not asked), `-99` (no answer), `-98` (don't know), and `-97` (skipped on web).
+
+## 2a. Missing values for AGE and PHYSHLTH
+
+```{r task2-missing}
+age_before <- GSS2022$AGE
+phys_before <- GSS2022$PHYSHLTH
+
+cat("AGE codes below 0, before they are set to NA:\n")
+print(table(age_before[age_before < 0]))
+
+cat("\nPHYSHLTH codes below 0, before they are set to NA:\n")
+print(table(phys_before[phys_before < 0]))
+
+GSS2022$AGE <- set_gss_missing(GSS2022$AGE)
+GSS2022$PHYSHLTH <- set_gss_missing(GSS2022$PHYSHLTH)
+
+cat("\nAGE after reserve codes are set to NA (summary):\n")
+print(summary(GSS2022$AGE))
+cat("Negative AGE values remaining:", any(GSS2022$AGE < 0, na.rm = TRUE), "\n")
+
+cat("\nPHYSHLTH after reserve codes are set to NA:\n")
+print_freq(GSS2022$PHYSHLTH)
+cat("Negative PHYSHLTH values remaining:", any(GSS2022$PHYSHLTH < 0, na.rm = TRUE), "\n")
+```
+
+`AGE` loses 208 no-answer cases. The remaining ages run from 18 to 89, and no negative code is left. `PHYSHLTH` loses 1,557 inapplicable cases, 31 skipped-on-web cases, 19 no-answer cases, and 15 don't-know cases (1,622 missing in total). The remaining values are days from 0 through 30. The value 0 is a real answer (no days of poor health), so it is kept. Most people who were asked the question reported 0 days (1,212 of the valid cases).
+
+## 2b. Correlation
+
+```{r task2-cor}
+# cor.test uses pairwise complete cases and a two-sided Pearson test.
+# Both variables are numeric counts, so Pearson's r matches the question.
+cor_age_phys <- cor.test(GSS2022$AGE, GSS2022$PHYSHLTH, method = "pearson")
+print(cor_age_phys)
+n_cor <- sum(complete.cases(GSS2022$AGE, GSS2022$PHYSHLTH))
+cat("Complete cases:", n_cor, "\n")
+```
+
+## 2c. Hypotheses
+
+Null hypothesis: the population correlation between age and days of poor physical health is 0. There is no linear association.
+
+Alternative hypothesis: the population correlation is not 0. There is a linear association. The test is two-sided, so the association may be positive or negative.
+
+## 2d. Test statistic and p-value
+
+The correlation is **r = `r r2(cor_age_phys$estimate)`**. The test statistic is **t = `r r2(cor_age_phys$statistic)`** on **`r cor_age_phys$parameter`** degrees of freedom. The p-value is **`r r2(cor_age_phys$p.value)`**. The test uses the `r n_cor` respondents who have a valid age and a valid `PHYSHLTH` answer.
+
+## 2e. Practical significance
+
+Cohen's benchmarks for a correlation are about 0.10 (small), 0.30 (medium), and 0.50 (large). **|r| = `r r2(abs(cor_age_phys$estimate))`** is below 0.10, so the linear association is **negligible**. It does not reach the benchmark for a small effect.
+
+## 2f. Scatterplot
+
+```{r task2-plot}
+# Plot only the cases that enter the correlation, and jitter the points
+# because both variables are integers (many people share the same age and
+# the same number of days). set.seed keeps the jitter the same each knit.
+set.seed(2022)
+plot_df <- GSS2022[complete.cases(GSS2022$AGE, GSS2022$PHYSHLTH), ]
+
+ggplot(plot_df, aes(x = AGE, y = PHYSHLTH)) +
+  geom_jitter(width = 0.35, height = 0.25, alpha = 0.28, size = 1.15, color = "#1f4e79") +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, color = "#b85c38", linewidth = 1) +
+  labs(
+    title = "Age and days of poor physical health",
+    subtitle = "2022 GSS. Points are jittered so stacked answers are visible. The line is the OLS fit.",
+    x = "Age (years)",
+    y = "Days of poor physical health in the past 30 days"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+```
+
+The cloud is stacked on zero days at every age. A thinner set of points runs from 1 day up to the maximum of 30 days, across the whole age range. The fitted line is nearly flat and sits a little above 2 days, with a very slight upward slope. That picture matches r = `r r2(cor_age_phys$estimate)`. There is no visible linear pattern in which older respondents report more days of poor physical health.
+
+## 2g. Conclusion
+
+The correlation is not statistically significant at the 5% level (p = `r r2(cor_age_phys$p.value)`), so the null hypothesis is not rejected. The practical effect is negligible (|r| = `r r2(abs(cor_age_phys$estimate))`). In this sample there is no evidence of a linear association between age and the number of days of poor physical health in the past 30 days.
+
+Two features of the variable sit behind that result. `PHYSHLTH` was asked on one module, so the correlation is among the `r n_cor` people who received it and answered it, and the answers pile up at zero days. Pearson's r describes a straight-line association. The flat fitted line says that straight line is not there.
+
+# Task 3: Independent t-test
+
+`CHILDS` is the number of children the respondent has ever had. In the codebook, 0 through 7 are counts and 8 means eight or more. The only reserve code in this file is `-100` (inapplicable). `HRSRELAX` asks how many hours the respondent has to relax after an average work day. It is on the Quality of Working Life module. Valid answers in this file run from 0 to 24 hours. Reserve codes are `-100` (inapplicable), `-99` (no answer), `-98` (don't know), and `-97` (skipped on web).
+
+## 3a. Missing values for CHILDS and HRSRELAX
+
+```{r task3-missing}
+childs_before <- GSS2022$CHILDS
+relax_before <- GSS2022$HRSRELAX
+
+cat("CHILDS codes below 0, before they are set to NA:\n")
+print(table(childs_before[childs_before < 0]))
+
+cat("\nHRSRELAX codes below 0, before they are set to NA:\n")
+print(table(relax_before[relax_before < 0]))
+
+GSS2022$CHILDS <- set_gss_missing(GSS2022$CHILDS)
+GSS2022$HRSRELAX <- set_gss_missing(GSS2022$HRSRELAX)
+
+cat("\nCHILDS after reserve codes are set to NA:\n")
+print(table(GSS2022$CHILDS, useNA = "ifany"))
+
+cat("\nHRSRELAX after reserve codes are set to NA:\n")
+print_freq(GSS2022$HRSRELAX)
+```
+
+`CHILDS` loses 11 inapplicable cases. The values 0 through 8 remain, and 0 is a real answer (no children), so it is kept. `HRSRELAX` loses 1,546 inapplicable cases, 30 skipped-on-web cases, 23 don't-know cases, and 14 no-answer cases. The remaining values are hours from 0 to 24. No negative code remains on either variable.
+
+## 3b. Dummy variable `CHILDS_YN`
+
+`CHILDS_YN` has two categories: people who reported 0 children, and people who reported 1 or more children.
+
+- `CHILDS` of 0 is coded 0
+- `CHILDS` of 1, 2, 3, 4, 5, 6, 7, or 8 is coded 1
+
+A report of exactly one child belongs in the "1 or more" group. The codebook value 8 means eight or more children; those respondents have children, so they are coded 1. Cases that are already missing on `CHILDS` stay missing. `CHILDS` itself is not overwritten.
+
+```{r task3-dummy}
+GSS2022$CHILDS_YN <- NA
+GSS2022$CHILDS_YN[GSS2022$CHILDS == 0] <- 0
+GSS2022$CHILDS_YN[GSS2022$CHILDS >= 1] <- 1
+
+GSS2022$CHILDS_YN_f <- factor(
+  GSS2022$CHILDS_YN,
+  levels = c(0, 1),
+  labels = c("No children", "1 or more children")
+)
+
+cat("Crosstab of original CHILDS (rows) by new CHILDS_YN (columns):\n")
+print(table(CHILDS = GSS2022$CHILDS, CHILDS_YN = GSS2022$CHILDS_YN, useNA = "ifany"))
+```
+
+Every respondent with 0 children is coded 0 (1,107 people). Every respondent with 1 through 8 children is coded 1. The 11 missing cases stay missing. The two columns do not share any substantive row, so the dummy matches the original variable.
+
+## 3c. Homogeneity of variance
+
+```{r task3-levene}
+# The t-test uses people who have both a valid dummy and a valid HRSRELAX.
+ttest_df <- GSS2022[complete.cases(GSS2022$HRSRELAX, GSS2022$CHILDS_YN_f), ]
+
+cat("Group means for hours of relaxation:\n")
+print(aggregate(HRSRELAX ~ CHILDS_YN_f, data = ttest_df,
+                FUN = function(x) c(n = length(x), mean = mean(x), sd = sd(x))))
+
+# car::leveneTest defaults to center = median (the Brown-Forsythe version).
+levene_relax <- leveneTest(HRSRELAX ~ CHILDS_YN_f, data = ttest_df)
+print(levene_relax)
+levene_p <- levene_relax[1, "Pr(>F)"]
+levene_F <- levene_relax[1, "F value"]
+```
+
+Levene's test (center = median) gives **F = `r r2(levene_F)`**. The p-value printed by R is `r format.pval(levene_p, digits = 3)`, which is **0.05** when rounded to two decimal places. The more precise value is 0.051.
+
+The 5% rule rejects the equal-variance null only when the p-value is below 0.05. A p-value of 0.051 is above that line, so the test does not reject equal variances. The homogeneity assumption is treated as met, and the t-test in part d assumes equal variances. The result is close to the cutoff, which is why the exact p-value is reported alongside the two-decimal rounding.
+
+## 3d. Independent-samples t-test
+
+There is no predicted direction, so the alternative is two-sided. Because Levene's test did not reject equal variances, the test is the Student two-sample t-test (`var.equal = TRUE`).
+
+```{r task3-ttest}
+ttest_relax <- t.test(
+  HRSRELAX ~ CHILDS_YN_f,
+  data = ttest_df,
+  var.equal = TRUE,
+  alternative = "two.sided"
+)
+print(ttest_relax)
+
+# Pooled Cohen's d from lsr. The function returns the absolute value.
+d_relax <- cohensD(HRSRELAX ~ CHILDS_YN_f, data = ttest_df, method = "pooled")
+```
+
+## 3e. Hypotheses
+
+Null hypothesis: the mean hours of relaxation are the same for people with no children and people with one or more children.
+
+Alternative hypothesis: the two means are different. The test is two-sided because the question does not predict which group has more time to relax.
+
+## 3f. Test statistic and p-value
+
+The test statistic is **t = `r r2(ttest_relax$statistic)`** on **`r ttest_relax$parameter`** degrees of freedom. The p-value is **`r r2(ttest_relax$p.value)`**.
+
+Respondents with no children report a mean of **`r r2(ttest_relax$estimate[1])`** hours (n = `r sum(ttest_df$CHILDS_YN_f == "No children")`). Respondents with one or more children report a mean of **`r r2(ttest_relax$estimate[2])`** hours (n = `r sum(ttest_df$CHILDS_YN_f == "1 or more children")`). The difference is about **`r r2(diff(rev(ttest_relax$estimate)))`** hours.
+
+## 3g. Cohen's d
+
+```{r task3-d}
+cat("Cohen's d (pooled):\n")
+print(d_relax)
+```
+
+Cohen's d is **`r r2(d_relax)`**. The benchmarks are about 0.20 (small), 0.50 (medium), and 0.80 (large). A d of `r r2(d_relax)` is **below the small benchmark**, so the practical effect is very small. The sign of the means says the direction: people with no children report the higher mean, by about 0.13 of a pooled standard deviation.
+
+## 3h. Conclusion
+
+The t-test is statistically significant at the 5% level (t = `r r2(ttest_relax$statistic)`, p = `r r2(ttest_relax$p.value)`), so the null hypothesis of equal means is rejected. People with no children report more time to relax after work than people with children, by about `r r2(diff(rev(ttest_relax$estimate)))` hours (about `r r2(ttest_relax$estimate[1])` hours versus `r r2(ttest_relax$estimate[2])` hours).
+
+The practical effect is very small (Cohen's d = `r r2(d_relax)`, below 0.20). The difference is detectable because the comparison uses `r nrow(ttest_df)` respondents, not because the gap in hours is large. `HRSRELAX` is asked of people on the work module, so the comparison is among respondents who were asked about hours after a work day. Levene's test was close to the 5% line (p = 0.051) and did not reject equal variances, which is why the equal-variance t-test is the test reported here.
