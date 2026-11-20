@@ -1,0 +1,395 @@
+---
+title: "Assignment 3"
+author: "Ani Pogula"
+date: "11/19/2026"
+output:
+  html_document:
+    df_print: default
+  pdf_document:
+    latex_engine: pdflatex
+params:
+  answers_only: false
+header-includes:
+  - \usepackage{pdflscape}
+---
+
+```{r setup, include = !params$answers_only, echo = !params$answers_only, message = FALSE, warning = FALSE}
+# install.packages("car")
+# install.packages("gdata")
+# install.packages("gmodels")
+# install.packages("lsr")
+# install.packages("ggplot2")
+# already installed, left these commented so knit doesn't try again
+
+library(car)
+library(gmodels)
+library(lsr)
+library(ggplot2)
+
+options(scipen = 999, width = 120)
+knitr::opts_chunk$set(
+  echo = !params$answers_only,
+  message = FALSE,
+  warning = FALSE,
+  comment = NA,
+  fig.width = 7,
+  fig.height = 4.5,
+  fig.align = "center"
+)
+
+# just so I don't have to type round() every time in the writeup
+r2 <- function(x) format(round(as.numeric(x), 2), nsmall = 2)
+
+# table() prints in one long row and it was getting cut off on the pdf,
+# so this prints the same counts going down the page
+print_freq <- function(x) {
+  tab <- table(x, useNA = "ifany")
+  out <- data.frame(value = names(tab), n = as.integer(tab))
+  print(out, row.names = FALSE)
+}
+
+# negatives in this file are the gss missing codes
+# -100 iap, -99 no answer, -98 dk, -97 skipped on web
+to_na <- function(x) {
+  x[x < 0] <- NA
+  x
+}
+
+load("GSS2022.Rdata")
+```
+
+GSS 2022 subset from the assignment folder. N = 3544. I'm using .05 for everything and rounding to 2 decimals when I talk about the output.
+
+# Task 1. Chi-square, trust and region
+
+Looked these up for 2022. TRUST is "can people be trusted":
+
+1 = most people can be trusted, 2 = can't be too careful, 3 = depends.
+
+REGION is where the interview was, 4 categories now: 1 northeast, 2 midwest, 3 south, 4 west. Nominal.
+
+## 1a
+
+```{r task1-missing}
+trust_before <- GSS2022$TRUST
+region_before <- GSS2022$REGION
+
+cat("trust, codes under 0:\n")
+print(table(trust_before[trust_before < 0]))
+
+cat("\nregion, codes under 0:\n")
+region_neg <- region_before[region_before < 0]
+if (length(region_neg) == 0) {
+  cat("none\n")
+} else {
+  print(table(region_neg))
+}
+
+# ok to set missing on the original variable
+GSS2022$TRUST <- to_na(GSS2022$TRUST)
+GSS2022$REGION <- to_na(GSS2022$REGION)
+
+cat("\ntrust after:\n")
+print(table(GSS2022$TRUST, useNA = "ifany"))
+cat("\nregion after:\n")
+print(table(GSS2022$REGION, useNA = "ifany"))
+```
+
+Trust had -100 (2325, question wasn't asked) and -98 (2 people said don't know). Both are NA now. What's left is 306 / 804 / 107 for codes 1, 2, 3. Region didn't have any missing codes. Counts are 525, 798, 1415, 806.
+
+## 1b
+
+Original trust goes 1 = trusts people, 3 = depends. They want it flipped:
+
+1 Depends, 2 Can't be too careful, 3 Most people can be trusted.
+
+So trustR = 4 - TRUST. NAs stay NA. I didn't overwrite TRUST.
+
+```{r task1-recode}
+GSS2022$trustR <- ifelse(is.na(GSS2022$TRUST), NA, 4 - GSS2022$TRUST)
+
+# factors are just for the labels in the crosstab
+GSS2022$trustR_f <- factor(
+  GSS2022$trustR,
+  levels = 1:3,
+  labels = c("Depends", "Can't be too careful", "Most people can be trusted")
+)
+GSS2022$region_f <- factor(
+  GSS2022$REGION,
+  levels = 1:4,
+  labels = c("Northeast", "Midwest", "South", "West")
+)
+
+print(table(TRUST = GSS2022$TRUST, trustR = GSS2022$trustR, useNA = "ifany"))
+```
+
+Checks out. TRUST 1 goes to trustR 3 (306), TRUST 2 stays 2 (804), TRUST 3 goes to trustR 1 (107). The 2327 missings are missing on both. Nothing got sorted into the wrong column.
+
+## 1c
+
+```{r task1-chi, results = "asis"}
+trust_region <- GSS2022[complete.cases(GSS2022$trustR_f, GSS2022$region_f), ]
+
+# sresid and asresid are the two residual rows. expected counts too.
+# prop.chisq off because it makes the cell huge
+cross_out <- capture.output(
+  CrossTable(
+    trust_region$trustR_f,
+    trust_region$region_f,
+    prop.r = TRUE,
+    prop.c = FALSE,
+    prop.t = FALSE,
+    prop.chisq = FALSE,
+    chisq = TRUE,
+    expected = TRUE,
+    sresid = TRUE,
+    asresid = TRUE,
+    format = "SPSS",
+    dnn = c("trustR", "region")
+  )
+)
+
+# sideways on the pdf so the table isn't cut off
+if (knitr::is_latex_output()) {
+  cat("\\begin{landscape}\n\\begin{scriptsize}\n\\begin{verbatim}\n")
+  cat(paste(cross_out, collapse = "\n"), "\n")
+  cat("\\end{verbatim}\n\\end{scriptsize}\n\\end{landscape}\n")
+} else {
+  cat("```\n")
+  cat(paste(cross_out, collapse = "\n"), "\n")
+  cat("```\n")
+}
+```
+
+```{r task1-chi-objects}
+tab_trust <- table(trust_region$trustR_f, trust_region$region_f)
+chi_trust <- chisq.test(tab_trust)
+v_trust <- cramersV(tab_trust)
+adj_resid <- chi_trust$stdres
+pearson_resid <- chi_trust$residuals
+```
+
+In each cell the lines are count, expected, row %, then Std Residual, then Adj Std Resid. Smallest expected count is 16.53 so none of the cells are under 5.
+
+## 1d
+
+H0: trustR and region are independent, no association.
+
+Ha: they're not independent. There is an association.
+
+Not a directional test. Chi square doesn't say which region trusts people more, that's the residuals later.
+
+## 1e
+
+Chi square = `r r2(chi_trust$statistic)`, df = `r chi_trust$parameter`. The p-value prints as `r format.pval(chi_trust$p.value, digits = 4)` which is under .001 (rounds to 0.00 if I only keep two decimals).
+
+## 1f
+
+```{r task1-v}
+v_trust
+```
+
+Cramer's V = `r r2(v_trust)`. Table is 3 x 4 so the df for the cutoff is the smaller of 2 and 3, which is 2. From the slides, for df = 2 small is about .07, medium .21, large .35. .10 is small. It's a little over the small line and nowhere near medium.
+
+## 1g
+
+I used the adjusted standardized residuals, the last number in each cell (Adj Std Resid). A cell counts as contributing if that number is bigger than 1.96 or smaller than -1.96. Positive means more people than you'd expect if trust and region weren't related. Negative means fewer.
+
+```{r task1-resid}
+round(adj_resid, 2)
+cat("\n")
+round(pearson_resid, 2)
+```
+
+The four that make it:
+
+Can't be too careful x Midwest is -3.66 (fewer than expected). Can't be too careful x South is 3.58 (more than expected). Most people can be trusted x Midwest is 3.45 (more). Most people can be trusted x South is -3.71 (fewer).
+
+Depends doesn't have any cell past 1.96. Northeast and West don't either. Biggest one that doesn't count is West / most people can be trusted at 1.27.
+
+The Std Residual row is the other residual, (observed - expected) / sqrt(expected). On that row only two cells pass 1.96, trusted x midwest (2.63) and trusted x south (-2.49). The "can't be too careful" ones are -1.88 and 1.62, so they only cross the line on the adjusted residual. I went with the adjusted ones since those are the ones you're supposed to compare to 1.96.
+
+## 1h
+
+p is way under .05 so I reject the null. Trust and region are associated. V is only .10 though so practically it's a small association. The pattern is mostly midwest vs south: midwest has more people saying others can be trusted than you'd expect, south has more people saying you can't be too careful. Northeast and west look ordinary, and "depends" is a small group that isn't driving it.
+
+Trust wasn't asked of everybody (2325 iap), so this is the 1217 people who actually got the question.
+
+# Task 2. Correlation, age and days of bad physical health
+
+AGE is age in years. Only missing code I saw was -99 (no answer). Ages that are real go from 18 to 89, and 89 is the top code (89 or older). PHYSHLTH is days in the last 30 that physical health wasn't good. It's on the work module so a lot of people are -100 because they weren't asked. Also -99, -98, -97. Real answers are 0 to 30. 0 means zero bad days, I left those in.
+
+## 2a
+
+```{r task2-missing}
+age_before <- GSS2022$AGE
+phys_before <- GSS2022$PHYSHLTH
+
+cat("age codes under 0:\n")
+print(table(age_before[age_before < 0]))
+cat("\nphyshlth codes under 0:\n")
+print(table(phys_before[phys_before < 0]))
+
+GSS2022$AGE <- to_na(GSS2022$AGE)
+GSS2022$PHYSHLTH <- to_na(GSS2022$PHYSHLTH)
+
+cat("\nage after:\n")
+print(summary(GSS2022$AGE))
+cat("any negatives left?", any(GSS2022$AGE < 0, na.rm = TRUE), "\n")
+
+cat("\nphyshlth after:\n")
+print_freq(GSS2022$PHYSHLTH)
+cat("any negatives left?", any(GSS2022$PHYSHLTH < 0, na.rm = TRUE), "\n")
+```
+
+Age: 208 people were -99, now NA. Min 18 max 89, no negatives left. Physhlth: 1557 iap, 31 skipped on web, 19 no answer, 15 don't know. That's 1622 missing. Rest are 0 through 30. A lot of people, 1212, said 0 days.
+
+## 2b
+
+```{r task2-cor}
+# pearson, two sided, drops NAs
+cor_age_phys <- cor.test(GSS2022$AGE, GSS2022$PHYSHLTH)
+cor_age_phys
+n_cor <- sum(complete.cases(GSS2022$AGE, GSS2022$PHYSHLTH))
+```
+
+## 2c
+
+H0: the correlation between age and days of poor physical health is 0.
+
+Ha: it isn't 0. Two sided, could go either way.
+
+## 2d
+
+r = `r r2(cor_age_phys$estimate)`, t = `r r2(cor_age_phys$statistic)`, df = `r cor_age_phys$parameter`, p = `r r2(cor_age_phys$p.value)`. n = `r n_cor` (people who had both).
+
+## 2e
+
+For r, small is .10, medium .30, large .50. `r r2(abs(cor_age_phys$estimate))` is under .10, so practically this is tiny. Not even a small effect.
+
+## 2f
+
+```{r task2-plot}
+# jitter because age and days are both whole numbers, otherwise it's just stripes
+set.seed(2022)
+plot_df <- GSS2022[complete.cases(GSS2022$AGE, GSS2022$PHYSHLTH), ]
+
+ggplot(plot_df, aes(x = AGE, y = PHYSHLTH)) +
+  geom_jitter(width = 0.35, height = 0.25, alpha = 0.3, size = 1.1, color = "steelblue") +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, color = "red") +
+  labs(
+    title = "Age and days physical health was not good",
+    x = "Age",
+    y = "Days in the past 30"
+  ) +
+  theme_bw()
+```
+
+Most of the dots are piled on 0, at every age. There's a thinner scatter going up to 30 days. The red line is almost flat, sitting a little above 2, maybe sloping up a tiny bit. That matches r = `r r2(cor_age_phys$estimate)`. I don't see a real line where older people have more bad-health days.
+
+## 2g
+
+p = `r r2(cor_age_phys$p.value)`, which is not under .05, so I don't reject the null. r is `r r2(cor_age_phys$estimate)`, too small to matter. I wouldn't say age and days of poor health are related in this data, at least not linearly. Also physhlth was only asked on one module, and a ton of answers are 0, so the cloud is mostly a band at the bottom.
+
+# Task 3. t-test, kids and hours to relax
+
+CHILDS is how many kids they've ever had. 0-7 are the actual counts, 8 means 8 or more. Only missing code was -100. HRSRELAX is hours to relax after a work day (work module again). Answers here go 0 to 24. Missing is -100, -99, -98, -97.
+
+## 3a
+
+```{r task3-missing}
+childs_before <- GSS2022$CHILDS
+relax_before <- GSS2022$HRSRELAX
+
+cat("childs codes under 0:\n")
+print(table(childs_before[childs_before < 0]))
+cat("\nhrsrelax codes under 0:\n")
+print(table(relax_before[relax_before < 0]))
+
+GSS2022$CHILDS <- to_na(GSS2022$CHILDS)
+GSS2022$HRSRELAX <- to_na(GSS2022$HRSRELAX)
+
+cat("\nchilds after:\n")
+print(table(GSS2022$CHILDS, useNA = "ifany"))
+cat("\nhrsrelax after:\n")
+print_freq(GSS2022$HRSRELAX)
+```
+
+Childs: 11 people were -100, now NA. 0 through 8 are still there. 0 is a real answer (no kids). Hrsrelax: 1546 iap, 30 skipped, 23 dk, 14 no answer. Left with hours 0-24. No negative codes left on either one.
+
+## 3b
+
+CHILDS_YN is 0 vs 1 or more kids. 0 stays 0. Anything 1 or higher, including exactly 1 kid and the 8 = "eight or more" people, gets coded 1. Missing stays missing. Made a new variable, didn't overwrite CHILDS.
+
+```{r task3-dummy}
+GSS2022$CHILDS_YN <- NA
+GSS2022$CHILDS_YN[GSS2022$CHILDS == 0] <- 0
+GSS2022$CHILDS_YN[GSS2022$CHILDS >= 1] <- 1
+
+GSS2022$CHILDS_YN_f <- factor(
+  GSS2022$CHILDS_YN,
+  levels = c(0, 1),
+  labels = c("No children", "1 or more children")
+)
+
+print(table(CHILDS = GSS2022$CHILDS, CHILDS_YN = GSS2022$CHILDS_YN, useNA = "ifany"))
+```
+
+0 lines up with 0 (1107 people). 1 through 8 all line up with 1. The 11 NAs stay NA. Looks right.
+
+## 3c
+
+```{r task3-levene}
+ttest_df <- GSS2022[complete.cases(GSS2022$HRSRELAX, GSS2022$CHILDS_YN_f), ]
+
+# just so I can see the means while I'm here
+aggregate(HRSRELAX ~ CHILDS_YN_f, data = ttest_df,
+          FUN = function(x) c(n = length(x), mean = mean(x), sd = sd(x)))
+
+levene_relax <- leveneTest(HRSRELAX ~ CHILDS_YN_f, data = ttest_df)
+levene_relax
+levene_p <- levene_relax[1, "Pr(>F)"]
+levene_F <- levene_relax[1, "F value"]
+```
+
+Levene's F = `r r2(levene_F)`, and the p it prints is `r format.pval(levene_p, digits = 3)`. Rounded to two decimals that's 0.05, but the actual p is .051, which is still above .05. So I do not reject equal variances. It's close though. Because it didn't quite hit .05 I used the regular equal-variance t test in the next part, not Welch.
+
+## 3d
+
+No direction in the hypothesis, so two sided. var.equal = TRUE because of the Levene result.
+
+```{r task3-ttest}
+ttest_relax <- t.test(
+  HRSRELAX ~ CHILDS_YN_f,
+  data = ttest_df,
+  var.equal = TRUE,
+  alternative = "two.sided"
+)
+ttest_relax
+
+d_relax <- cohensD(HRSRELAX ~ CHILDS_YN_f, data = ttest_df)
+```
+
+## 3e
+
+H0: mean hours of relaxation are the same if you have no kids and if you have 1 or more.
+
+Ha: the means are different. Two sided, the prompt didn't say which group should be higher.
+
+## 3f
+
+t = `r r2(ttest_relax$statistic)`, df = `r ttest_relax$parameter`, p = `r r2(ttest_relax$p.value)`.
+
+No kids: mean `r r2(ttest_relax$estimate[1])` hours, n = `r sum(ttest_df$CHILDS_YN_f == "No children")`. One or more kids: mean `r r2(ttest_relax$estimate[2])`, n = `r sum(ttest_df$CHILDS_YN_f == "1 or more children")`. Difference is about `r r2(diff(rev(ttest_relax$estimate)))` hours.
+
+## 3g
+
+```{r task3-d}
+d_relax
+```
+
+d = `r r2(d_relax)`. Small is .20, medium .50, large .80, so .13 is smaller than small. People with no kids are the ones with the higher mean, but it's only about a tenth of a standard deviation.
+
+## 3h
+
+p = `r r2(ttest_relax$p.value)` so statistically yes, I reject equal means. People without kids report more time to relax, `r r2(ttest_relax$estimate[1])` vs `r r2(ttest_relax$estimate[2])` hours, about `r r2(diff(rev(ttest_relax$estimate)))` hours apart. Practically it's weak though, d = `r r2(d_relax)` doesn't even get to the small cutoff. The n is `r nrow(ttest_df)`, which is big enough that a half hour difference shows up as significant. Hrsrelax is only people who got the work questions. Levene was borderline (p = .051) and I stuck with the equal variance test since it didn't go under .05.
